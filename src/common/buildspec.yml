@@ -1,0 +1,35 @@
+version: 0.2
+
+env:
+  secrets-manager:
+    DOXCI_SECRET: arn:aws:secretsmanager:us-east-1:329983071938:secret:doxci_development_credentials-wi7zm0
+    DOCKER_LOGIN_SECRET: arn:aws:secretsmanager:us-east-1:329983071938:secret:DOCKER_LOGIN_SECRET-xAGeM8
+  exported-variables:
+    - IMAGE_TAG
+
+phases:
+  pre_build:
+    commands:
+      - echo Exporting Docker Hub credentials...
+      - export DOCKER_HUB_USERNAME=$(echo $DOCKER_LOGIN_SECRET | jq -r '.DOCKER_LOGIN_USERNAME')
+      - export DOCKER_HUB_PASSWORD=$(echo $DOCKER_LOGIN_SECRET | jq -r '.DOCKER_LOGIN_PASSWORD')
+      - echo Logging in to Docker Hub...
+      - docker login -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD
+      - echo Logging in to Amazon ECR...
+      - export AWS_ACCESS_KEY_ID=$(echo $DOXCI_SECRET | jq -r '.AWS_ACCESS_KEY_ID')
+      - export AWS_SECRET_ACCESS_KEY=$(echo $DOXCI_SECRET | jq -r '.AWS_SECRET_ACCESS_KEY')
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - echo Generating timestamp and appending to IMAGE_TAG...
+      - export TIMESTAMP=$(date +%Y%m%d%H%M%S)
+      - export IMAGE_TAG=$BRANCH_NAME-$TIMESTAMP
+      - echo "Using original code structure for Docker build"
+
+  build:
+    commands:
+      - echo "Building Docker image for $COMPONENT_NAME"
+      - docker build --build-arg COMPONENT_NAME=$COMPONENT_NAME -t my-lambda-image:$COMPONENT_NAME -f src/common/Dockerfile .
+      - docker tag my-lambda-image:$COMPONENT_NAME $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$REPOSITORY_NAME:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$REPOSITORY_NAME:$IMAGE_TAG
